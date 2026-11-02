@@ -42,6 +42,11 @@ def parse_args(args):
     parser_a.add_argument("--overwrite", action="store_true", help="Overwrite existing files in output path")
     parser_a.add_argument("--compact", action="store_true", help="Generate minimal markdown")
     parser_a.add_argument(
+        "--trusted",
+        action="store_true",
+        help="Trust the notebook source: preserve active HTML, JavaScript and interactive rich-media outputs (unsafe for external notebooks)",
+    )
+    parser_a.add_argument(
         "--normalize",
         action="store_true",
         help="Normalize each BibTeX keyword to lowercase with uppercase first letter",
@@ -79,12 +84,13 @@ def parse_args(args):
                     dry_run=known_args.dry_run,
                 )
             elif known_args.input.lower().endswith(".ipynb"):
-                # Run command to import bibtex.
+                # Run command to import notebook.
                 import_notebook(
                     known_args.input,
                     output_dir=known_args.output,
                     overwrite=known_args.overwrite,
                     dry_run=known_args.dry_run,
+                    trusted=known_args.trusted,
                 )
 
 

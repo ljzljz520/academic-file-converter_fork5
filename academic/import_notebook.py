@@ -11,6 +11,11 @@ import yaml
 from traitlets.config import Config
 
 from academic.jupyter_whitespace_remover import JupyterWhitespaceRemover
+from academic.notebook_sanitizer import (
+    SafeNotebookPreprocessor,
+    find_unsafe_markdown,
+    sanitize_exported_resources,
+)
 
 
 def _get_slug(text: str) -> str:
@@ -22,10 +27,22 @@ def import_notebook(
     output_dir=os.path.join("content", "post"),
     overwrite=False,
     dry_run=False,
+    trusted=False,
 ):
-    """Import blog posts from Jupyter Notebook files"""
+    """Import blog posts from Jupyter Notebook files
+
+    By default, notebooks are treated as untrusted: active content (raw HTML
+    scripts, JavaScript outputs, interactive/SVG rich media) is neutralised and
+    rich outputs fall back to static images or plain text. Pass ``trusted=True``
+    (CLI ``--trusted``) only for notebooks whose authors you trust.
+    """
     from academic.cli import log
 
+    if trusted:
+        log.warning(
+            "Trusted mode enabled: active content (HTML scripts, JavaScript and interactive outputs) "
+            "will be preserved as-is. Only use --trusted with notebooks from authors you trust."
+        )
     log.info(f"Searching for Jupyter notebooks in `{input_path}`")
     for filename in glob.glob(input_path, recursive=True):
         if not (filename.endswith(".ipynb") and os.path.basename(filename) != ".ipynb_checkpoints"):
@@ -38,13 +55,14 @@ def import_notebook(
 
         # Export Markdown
         nbc_config = Config()
-        nbc_config.MarkdownExporter.preprocessors = [JupyterWhitespaceRemover]
+        nbc_config.MarkdownExporter.preprocessors = [JupyterWhitespaceRemover, SafeNotebookPreprocessor]
+        nbc_config.SafeNotebookPreprocessor.trusted = trusted
         exporter = nbc.MarkdownExporter(config=nbc_config)
         if not dry_run:
-            _export(nb, exporter, output_dir, filename, ".md", overwrite)
+            _export(nb, exporter, output_dir, filename, ".md", overwrite, trusted)
 
 
-def _export(nb, exporter, output_dir, filename, extension, overwrite):
+def _export(nb, exporter, output_dir, filename, extension, overwrite, trusted=False):
     from academic.cli import log
 
     # Determine output path for page bundle
@@ -71,7 +89,17 @@ def _export(nb, exporter, output_dir, filename, extension, overwrite):
         front_matter_from_file = {}
 
     # Convert notebook to markdown
-    (body, resources) = exporter.from_notebook_node(nb)
+    body, resources = exporter.from_notebook_node(nb)
+
+    # Final safety pass over extracted resources (the extraction preprocessors
+    # run before the sanitizer, so dangerous SVG/HTML files can still be present).
+    sanitize_exported_resources(body, resources, trusted=trusted, logger=log)
+
+    # Audit the rendered body for any active content left outside code regions.
+    if not trusted:
+        leftover = find_unsafe_markdown(body)
+        if leftover is not None:
+            log.warning(f"Potentially active content remains after sanitization: {leftover}")
 
     # Export notebook resources
     for name, data in resources.get("outputs", {}).items():
